@@ -1,61 +1,85 @@
 import sqlite3
-from db import db
+import os
+import sys
+from flask_restful import Resource, reqparse
+maindir=os.path.dirname(os.path.abspath(__file__))+"/../"
+sys.path.append(maindir)
+from models.people import PeopleModel
+#Main application for the wiki of Game of Thrones
 
-class PeopleModel(db.Model):
-    __tablename__='people'
+class People(Resource):   
+    def get(self):
+        connection = sqlite3.connect('people.db')
+        cursor = connection.cursor()
 
-    Id = db.Column(db.Integer,primary_key=True)
-    name = db.Column(db.String(80))
-    isAlive = db.Column(db.Boolean)
-    isKing = db.Column(db.Boolean)
-    placeId = db.Column(db.Integer)
+        query = "SELECT * FROM people"
+        result = cursor.execute(query)
+        people= []
+        for row in result:
+            people.append({'Id':row[0],'name':row[1],'isAlive':row[2],'isKing':row[3],'placeId':row[4]})
+            
+        connection.close()
+        return {'people':people}
+
+class Character(Resource):
+    #Argumentos que deben ser especificados en caso de creación o actualización de un personaje (isAlive, king, y placeId), el Id es dado el siguiente no utilizado en la lista de personajes
+    parser = reqparse.RequestParser()
+    parser.add_argument('Id', type=int,required=True, help="El Id del personaje debe ser especificado")
+    parser.add_argument('isAlive', type=bool, default=False,required=False, help="Si el usuario no especifica si el personaje esta vivo o muerto, se le da por muerto")
+    parser.add_argument('isKing', type=bool, default=False, required=False, help="Debe ser especificado si el personaje es rey o no")
+    parser.add_argument('placeId', type=int, required=False, help="El lugar del personaje debe ser especificado")
+
+    def get(self, name):
+        character = PeopleModel.find_by_name(name)
+        if character:
+            return character.json()
+        return {'message':'El personaje buscado no existe, consultar con Sandwich Tardy si hay registros suyos en la Citadel'}
+        
+    def post(self, name):
+        #Si el usuario intenta crear un personaje ya existente en la base de datos, la solicitud del usuario es incorrecta. Hay que avisar al usuario, y devolver el codigo 400 (bad-request)
+        if PeopleModel.find_by_name(name):
+            return {'message': 'El personaje '+str(name)+' ya existe.'}, 400 
+
+        data = Character.parser.parse_args()
+        character = PeopleModel(name,data['Id'],data['isAlive'],data['isKing'],data['placeId'])
+        try:
+           character.insert()
+           return character.json()
+        except:
+            return {'message':'Error al intentar añadir el personaje a la base de datos'}, 500 #Http: Devolvemos un internal-server-error
+
+    def delete(self,name):
+        #Para borrar, necesitamos una lista, esta lista son todos los personajes, menos el que buscamos borrar
+        if PeopleModel.find_by_name(name):
+            connection = sqlite3.connect('people.db')
+            cursor = connection.cursor()
+            query = "DELETE FROM people WHERE name=?"
+            cursor.execute(query,(name,))
+            connection.commit()
+            connection.close()
+        
+            return {'message':str(name)+' fue eliminado.'}
+        else:
+            return {'message':str(name)+' no existe. ¿Está ya muerto?'}
+
+    def put(self,name):
+        data = Character.parser.parse_args()
+
+        character = PeopleModel.find_by_name(name)
+        updated_character = PeopleModel(name,data['Id'],data['isAlive'],data['placeId'],data['isKing'])
+        
+        if character is None:
+            try:
+                updated_character.insert()
+            except:
+                return {"message":"Error al añadir el personaje"}, 500
+        else:
+            try:
+                updated_character.update()
+            except:
+                return {"message":"Error al actualizar el personaje"}, 500
+        return character #Return el character actualizado/creado para reflejar el cambio
+
+        
     
-    def __init__(self,name,Id,isAlive,isKing,placeId):
-        self.name = name
-        self.Id = Id
-        self.isAlive = isAlive
-        self.isKing = isKing
-        self.placeId = placeId
 
-    def json(self):
-        return {'name':self.name,'Id':self.Id,'isAlive':self.isAlive,'isKing':self.isKing,'placeId':self.placeId}
-
-    @classmethod
-    def find_by_name(cls,name): #Función para encontrar el personaje que queremos leer, crear, cambiar o eliminar
-        connection = sqlite3.connect('people.db')
-        cursor = connection.cursor()
-
-        query = "SELECT * FROM people WHERE name=?"
-        result = cursor.execute(query, (name,))
-        row = result.fetchone()
-        connection.close()
-
-        if row:
-            return cls(*row) #pasar todas las posiciones de row
-
-    def insert(self):
-        connection = sqlite3.connect('people.db')
-        cursor=connection.cursor()
-
-        query = "INSERT INTO people VALUES (?,?,?,?,?)"
-        cursor.execute(query, (self.name,self.Id,self.isAlive,self.isKing,self.placeId))
-        connection.commit()
-        connection.close()
-
-    def update(self):
-        connection=sqlite3.connect('people.db')
-        cursor = connection.cursor()
-
-        queryID = "UPDATE people SET Id=? WHERE name=?"
-        queryAlive = "UPDATE people SET isAlive=? WHERE name=?"
-        queryKing = "UPDATE people SET isKing=? WHERE name=?"
-        queryPlace = "UPDATE people SET placeId=? WHERE name=?"
-
-        cursor.execute(queryID, (self.name,self.Id))
-        cursor.execute(queryAlive, (self.name,self.isAlive))
-        cursor.execute(queryKing, (self.name,self.isKing))
-        cursor.execute(queryPlace, (self.name,self.placeId))
-        
-        connection.commit()
-        connection.close()
-        
